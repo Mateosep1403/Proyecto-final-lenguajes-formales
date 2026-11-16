@@ -14,25 +14,36 @@ def fmt_set(s):
     return '{' + ', '.join(items) + '}'
 
 
+def production_str(head, body):
+    return f"{head} -> {''.join(body) or EPS}"
+
+
 class Grammar:
     def __init__(self, lines):
         # productions: list of (head, body) where body is a tuple of symbols
         # (the empty tuple is the epsilon production).
         self.productions = []
-        self.nonterminals = []
         for line in lines:
-            head, _, rhs = line.partition('->')
-            head = head.strip()
-            self.nonterminals.append(head)
-            for alt in rhs.split():
-                body = () if alt == EPS else tuple(alt)
-                self.productions.append((head, body))
+            head, _arrow, *alternatives = line.split()
+            for alt in alternatives:
+                self.productions.append((head, () if alt == EPS else tuple(alt)))
         self.start = 'S'
-        self.nt_set = set(self.nonterminals)
-        self.terminals = sorted({s for _, b in self.productions
-                                 for s in b if s not in self.nt_set})
+        self.nonterminals = {head for head, _ in self.productions}
+        self.terminals = sorted({s for _, body in self.productions
+                                 for s in body if s not in self.nonterminals})
         self._compute_first()
         self._compute_follow()
+
+    def productions_of(self, A):
+        """(index, body) of every production with head A."""
+        return [(i, body) for i, (head, body) in enumerate(self.productions) if head == A]
+
+    def tokens(self, w):
+        """The input w followed by the end marker, or None if w has a symbol
+        that is not a terminal of the grammar (such a string is rejected)."""
+        if any(c not in self.terminals for c in w):
+            return None
+        return list(w) + [END]
 
     # ---- FIRST ----------------------------------------------------------
     def first_of_string(self, symbols):
@@ -48,7 +59,7 @@ class Grammar:
 
     def _compute_first(self):
         self.first = {a: {a} for a in self.terminals}
-        for A in self.nt_set:
+        for A in self.nonterminals:
             self.first[A] = set()
         changed = True
         while changed:
@@ -61,14 +72,14 @@ class Grammar:
 
     # ---- FOLLOW ---------------------------------------------------------
     def _compute_follow(self):
-        self.follow = {A: set() for A in self.nt_set}
+        self.follow = {A: set() for A in self.nonterminals}
         self.follow[self.start].add(END)
         changed = True
         while changed:
             changed = False
             for A, body in self.productions:
                 for i, B in enumerate(body):
-                    if B not in self.nt_set:
+                    if B not in self.nonterminals:
                         continue
                     f = self.first_of_string(body[i + 1:])
                     new = f - {EPS}
@@ -79,7 +90,7 @@ class Grammar:
                         changed = True
 
     def print_sets(self):
-        for A in sorted(self.nt_set):
+        for A in sorted(self.nonterminals):
             print(f"First({A}) = {fmt_set(self.first[A])}")
-        for A in sorted(self.nt_set):
+        for A in sorted(self.nonterminals):
             print(f"Follow({A}) = {fmt_set(self.follow[A])}")

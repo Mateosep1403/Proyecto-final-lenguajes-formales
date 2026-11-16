@@ -7,61 +7,54 @@
 import sys
 
 from grammar import Grammar
+from input_strings import read_strings
 from ll1 import LL1
 from slr import SLR
 
 PROMPT = "Select a parser (T: for LL(1), B: for SLR(1), Q: quit):"
 
 
-def run_strings(parser, lines, trace):
-    """Read strings until an empty line (or EOF); print yes/no for each."""
-    while lines:
-        w = lines.pop(0).strip()
-        if w == '':
-            return
-        if w == 'e':
-            w = ''
-        ok, _, steps = parser.parse(w, trace=trace)
-        if trace:
-            for stk, inp, act in steps:
-                print(f"  {stk:<30} {inp:<20} {act}")
-        print('yes' if ok else 'no')
+def run_strings(parser, trace):
+    for w in read_strings(sys.stdin):
+        accepted, _, steps = parser.parse(w, trace=trace)
+        for stack, rest, action in steps:
+            print(f"  {stack:<30} {rest:<20} {action}")
+        print('yes' if accepted else 'no')
+
+
+def print_tables(ll1, slr):
+    print("LL(1) table:" + ("" if ll1.is_valid else "  (not LL(1))"))
+    ll1.print_table()
+    slr.print_automaton()
+    print("SLR(1) table:" + ("" if slr.is_valid else "  (has conflicts: not SLR(1))"))
+    slr.print_table()
 
 
 def main():
     flags = set(sys.argv[1:])
-    lines = [l.rstrip('\r\n') for l in sys.stdin.read().split('\n')]
-    n = int(lines.pop(0).strip())
-    g = Grammar([lines.pop(0).strip() for _ in range(n)])
+    n = int(sys.stdin.readline())
+    g = Grammar([sys.stdin.readline() for _ in range(n)])
     if '--sets' in flags:
         g.print_sets()
-    ll, slr = LL1(g), SLR(g)
-    trace = '--trace' in flags
+    ll1, slr = LL1(g), SLR(g)
     if '--tables' in flags:
-        print("LL(1) table:" + ("" if ll.is_ll1 else "  (has conflicts: not LL(1))"))
-        ll.print_table()
-        slr.print_automaton()
-        print("SLR(1) table:" + ("" if slr.is_slr else "  (has conflicts: not SLR(1))"))
-        slr.print_table()
+        print_tables(ll1, slr)
+    trace = '--trace' in flags
 
-    if ll.is_ll1 and slr.is_slr:
+    if ll1.is_valid and slr.is_valid:
+        parsers = {'T': ll1, 'B': slr}
         while True:
             print(PROMPT)
-            if not lines:
-                break
-            c = lines.pop(0).strip().upper()
-            if c == 'Q':
-                break
-            if c == 'T':
-                run_strings(ll, lines, trace)
-            elif c == 'B':
-                run_strings(slr, lines, trace)
-    elif ll.is_ll1:
-        print("Grammar is LL(1).")
-        run_strings(ll, lines, trace)
-    elif slr.is_slr:
-        print("Grammar is SLR(1).")
-        run_strings(slr, lines, trace)
+            line = sys.stdin.readline()
+            choice = line.strip()
+            if not line or choice == 'Q':
+                return
+            if choice in parsers:
+                run_strings(parsers[choice], trace)
+    elif ll1.is_valid or slr.is_valid:
+        parser = ll1 if ll1.is_valid else slr
+        print(f"Grammar is {parser.name}.")
+        run_strings(parser, trace)
     else:
         print("Grammar is neither LL(1) nor SLR(1).")
 

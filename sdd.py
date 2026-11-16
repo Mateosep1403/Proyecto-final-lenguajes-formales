@@ -7,6 +7,9 @@ and a function that computes it.  Attributes are written as (position, name),
 where position 0 is the head of the production and 1..n are the body symbols.
 """
 import heapq
+from dataclasses import dataclass
+
+from grammar import production_str
 
 
 class Rule:
@@ -18,12 +21,13 @@ class Rule:
 
 
 class SDD:
-    def __init__(self, attrs, rules, main=('S', 's')):
+    def __init__(self, attrs, rules, main_attr):
         # attrs: symbol -> {'syn': [names], 'inh': [names]}
         # rules: (head, body_tuple) -> [Rule, ...]
+        # main_attr: attribute of the start symbol printed as the result
         self.attrs = attrs
         self.rules = rules
-        self.main = main
+        self.main_attr = main_attr
 
     def decl(self, sym):
         return self.attrs.get(sym, {'syn': [], 'inh': []})
@@ -34,68 +38,73 @@ class SDD:
         if self.decl(g.start)['inh']:
             errors.append(f"start symbol {g.start} must not have inherited attributes")
         for head, body in g.productions:
-            label = f"{head} -> {''.join(body) or 'e'}"
-            rules = self.rules.get((head, body), [])
-            defined = []
-            for r in rules:
-                pos, attr = r.target
-                if not 0 <= pos <= len(body):
-                    errors.append(f"{label}: bad position in target {r.target}")
+            errors += self._check_production(g, head, body)
+        return errors
+
+    def _check_production(self, g, head, body):
+        """Each rule defines a synthesized attribute of the head or an inherited
+        attribute of a body symbol, using only attributes of this production;
+        every such attribute is defined exactly once."""
+        label = production_str(head, body)
+        symbol_at = lambda pos: head if pos == 0 else body[pos - 1]
+        errors, defined = [], []
+        for r in self.rules.get((head, body), []):
+            pos, attr = r.target
+            if not 0 <= pos <= len(body):
+                errors.append(f"{label}: bad position in target {r.target}")
+                continue
+            kind = 'syn' if pos == 0 else 'inh'
+            if attr not in self.decl(symbol_at(pos))[kind]:
+                role = ('a synthesized attribute of the head' if pos == 0
+                        else 'an inherited attribute of a body symbol')
+                errors.append(f"{label}: {symbol_at(pos)}.{attr} is not {role}")
+            for dp, da in r.deps:
+                if not 0 <= dp <= len(body):
+                    errors.append(f"{label}: bad dependency position {dp}")
                     continue
-                sym = head if pos == 0 else body[pos - 1]
-                if pos == 0 and attr not in self.decl(sym)['syn']:
-                    errors.append(f"{label}: {sym}.{attr} defined but is not a "
-                                  f"synthesized attribute of the head")
-                if pos > 0 and attr not in self.decl(sym)['inh']:
-                    errors.append(f"{label}: {sym}.{attr} defined but is not an "
-                                  f"inherited attribute of a body symbol")
-                for dp, da in r.deps:
-                    if not 0 <= dp <= len(body):
-                        errors.append(f"{label}: bad dependency position {dp}")
-                        continue
-                    dsym = head if dp == 0 else body[dp - 1]
-                    if dsym in g.nt_set:
-                        d = self.decl(dsym)
-                        if da not in d['syn'] + d['inh']:
-                            errors.append(f"{label}: uses undeclared {dsym}.{da}")
-                    elif da != 'lexval':
-                        errors.append(f"{label}: terminal {dsym} only has lexval")
-                defined.append((pos, attr))
-            required = [(0, a) for a in self.decl(head)['syn']]
-            for i, s in enumerate(body):
-                if s in g.nt_set:
-                    required += [(i + 1, a) for a in self.decl(s)['inh']]
-            for req in required:
-                c = defined.count(req)
-                if c != 1:
-                    errors.append(f"{label}: attribute at position {req} is defined "
-                                  f"{c} times (must be exactly once)")
+                dsym = symbol_at(dp)
+                if dsym in g.nonterminals:
+                    d = self.decl(dsym)
+                    if da not in d['syn'] + d['inh']:
+                        errors.append(f"{label}: uses undeclared {dsym}.{da}")
+                elif da != 'lexval':
+                    errors.append(f"{label}: terminal {dsym} only has lexval")
+            defined.append((pos, attr))
+        required = [(0, a) for a in self.decl(head)['syn']]
+        for i, s in enumerate(body, 1):
+            if s in g.nonterminals:
+                required += [(i, a) for a in self.decl(s)['inh']]
+        for req in required:
+            count = defined.count(req)
+            if count != 1:
+                errors.append(f"{label}: attribute at position {req} is defined "
+                              f"{count} times (must be exactly once)")
         return errors
 
 
 # ---- tree helpers -------------------------------------------------------
-def preorder(n):
-    yield n
-    for c in n.children:
-        yield from preorder(c)
+def preorder(root):
+    """Iterative, so that deeply nested trees do not hit the recursion limit."""
+    stack = [root]
+    while stack:
+        n = stack.pop()
+        yield n
+        stack.extend(reversed(n.children))
 
 
-def number_nodes(root):
-    for i, n in enumerate(preorder(root), 1):
-        n.id = i
-
-
-def vname(nodes, v):
-    n = nodes[v[0]]
-    sym = f"'{n.symbol}'" if n.terminal else n.symbol
-    return f"{sym}#{v[0]}.{v[1]}"
+def node_label(n):
+    return f"'{n.symbol}'#{n.id}" if n.terminal else f"{n.symbol}#{n.id}"
 
 
 # ---- dependency graph ---------------------------------------------------
 def build_graph(root, g, sdd):
-    """Vertices are (node_id, attr).  An edge u -> v means u is used to
-    compute v (so u must be evaluated first)."""
-    nodes = {n.id: n for n in preorder(root)}
+    """Numbers the nodes in preorder and returns (nodes, verts, preds, rule_of).
+    Vertices are (node_id, attr).  An edge u -> v means u is used to compute v
+    (so u must be evaluated first); preds[v] is the set of such u."""
+    nodes = {}
+    for i, n in enumerate(preorder(root), 1):
+        n.id = i
+        nodes[i] = n
     verts, preds, rule_of = set(), {}, {}
     for n in nodes.values():
         if n.terminal:
@@ -106,15 +115,12 @@ def build_graph(root, g, sdd):
     for n in nodes.values():
         if n.terminal:
             continue
-        head, body = g.productions[n.prod]
         at = lambda pos, n=n: n if pos == 0 else n.children[pos - 1]
-        for r in sdd.rules.get((head, body), []):
-            tv = (at(r.target[0]).id, r.target[1])
+        for r in sdd.rules.get(g.productions[n.prod], []):
+            target = (at(r.target[0]).id, r.target[1])
             srcs = [(at(p).id, a) for p, a in r.deps]
-            verts.add(tv)
-            verts.update(srcs)
-            rule_of[tv] = (r, srcs)
-            preds.setdefault(tv, set()).update(srcs)
+            rule_of[target] = (r, srcs)
+            preds.setdefault(target, set()).update(srcs)
     return nodes, verts, preds, rule_of
 
 
@@ -153,41 +159,45 @@ def find_cycle(remaining, preds):
     return cyc + [cyc[0]]
 
 
+@dataclass
+class Evaluation:
+    nodes: dict          # node id -> Node
+    order: list          # topological order of the vertices (node_id, attr)
+    rule_of: dict        # vertex -> (Rule, source vertices); lexvals have none
+    cycle: list = None   # a cycle of the dependency graph, or None
+
+
 def evaluate(root, g, sdd):
-    """Returns dict with 'nodes', 'order', 'cycle' (None if non-circular)."""
     nodes, verts, preds, rule_of = build_graph(root, g, sdd)
     order, remaining = topological_order(verts, preds)
     if remaining:
-        return {'nodes': nodes, 'order': order,
-                'cycle': find_cycle(remaining, preds)}
+        return Evaluation(nodes, order, rule_of, find_cycle(remaining, preds))
     for v in order:
         if v in rule_of:
             r, srcs = rule_of[v]
-            vals = [nodes[i].attrs[a] for i, a in srcs]
-            nodes[v[0]].attrs[v[1]] = r.fn(*vals)
-    return {'nodes': nodes, 'order': order, 'cycle': None, 'rule_of': rule_of}
+            nodes[v[0]].attrs[v[1]] = r.fn(*(nodes[i].attrs[a] for i, a in srcs))
+    return Evaluation(nodes, order, rule_of)
 
 
 # ---- printing -----------------------------------------------------------
+def vertex_str(nodes, v):
+    return f"{node_label(nodes[v[0]])}.{v[1]}"
+
+
 def print_tree(root, g):
-    def rec(n, depth):
-        pad = '  ' * depth
-        attrs = ', '.join(f"{k}={v}" for k, v in n.attrs.items())
-        if n.terminal:
-            print(f"{pad}'{n.symbol}'#{n.id} {{{attrs}}}")
-        else:
-            head, body = g.productions[n.prod]
-            print(f"{pad}{n.symbol}#{n.id} [{head} -> {''.join(body) or 'e'}] {{{attrs}}}")
-        for c in n.children:
-            rec(c, depth + 1)
-    rec(root, 0)
+    stack = [(root, 0)]
+    while stack:
+        n, depth = stack.pop()
+        attrs = ', '.join(f"{k}={v}" for k, v in sorted(n.attrs.items()))
+        prod = '' if n.terminal else f" [{production_str(*g.productions[n.prod])}]"
+        print(f"{'  ' * depth}{node_label(n)}{prod} {{{attrs}}}")
+        stack.extend((c, depth + 1) for c in reversed(n.children))
 
 
-def print_order(result):
-    nodes, rule_of = result['nodes'], result.get('rule_of', {})
-    for k, v in enumerate(result['order'], 1):
-        note = '' if v in rule_of else '   (given by the scanner)'
-        print(f"  {k:>3}. {vname(nodes, v)}{note}")
+def print_order(ev):
+    for k, v in enumerate(ev.order, 1):
+        note = '' if v in ev.rule_of else '   (given by the scanner)'
+        print(f"  {k:>3}. {vertex_str(ev.nodes, v)}{note}")
 
 
 def print_sdd(g, sdd):
@@ -197,7 +207,6 @@ def print_sdd(g, sdd):
         print(f"  {sym}: synthesized {d['syn']}, inherited {d['inh']}")
     print("Semantic rules:")
     for head, body in g.productions:
-        rules = sdd.rules.get((head, body), [])
-        print(f"  {head} -> {''.join(body) or 'e'}")
-        for r in rules:
+        print(f"  {production_str(head, body)}")
+        for r in sdd.rules.get((head, body), []):
             print(f"      {r.text}")

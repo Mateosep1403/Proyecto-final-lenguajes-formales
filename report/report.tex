@@ -1,0 +1,676 @@
+\documentclass[11pt]{article}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{multicol}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\newcommand{\todo}[1]{\par\noindent\fcolorbox{red}{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{\textbf{TODO (by hand):} #1}}\par\smallskip}
+\newcommand{\G}{\ensuremath{G_1}}
+
+\title{Formal Languages Project\\FIRST/FOLLOW, LL(1), SLR(1) and SDD evaluation}
+\author{Mateo Sepúlveda Escobar \and TODO: full name of Isabella}
+\date{SI2002 Formal Languages --- EAFIT, 2026-2}
+
+\begin{document}
+\maketitle
+
+\section{Overview}
+
+We implemented, in Python using only its standard library, the algorithms of
+Aho et al., \emph{Compilers: Principles, Techniques, and Tools} (2nd ed.)
+required by the assignment. Table~\ref{tab:map} relates each part of the book
+to the file that implements it and to the data structures it uses.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{p{4.6cm}p{2.2cm}p{8.2cm}}
+\toprule
+Book & File & Data structures \\
+\midrule
+FIRST and FOLLOW, Section 4.4.2 &
+\texttt{grammar.py} &
+Productions as a list of pairs \texttt{(head, body)}, where the body is a tuple of
+symbols and $\varepsilon$ is the empty tuple. FIRST and FOLLOW are dictionaries
+from symbol to set. \\
+LL(1) grammars, Section 4.4.3 (definition and Algorithm 4.31) &
+\texttt{ll1.py} &
+The table is a dictionary $(A, a) \mapsto$ list of production indices. \\
+Table-driven predictive parsing, Section 4.4.4 (Algorithm 4.34) &
+\texttt{ll1.py} &
+Stack of parse-tree nodes (a Python list; the top is the last element). \\
+LR(0) items, CLOSURE, GOTO and canonical collection, Section 4.6.2 &
+\texttt{slr.py} &
+An item is a pair (production index, dot position). A state is a
+\texttt{frozenset} of items. A dictionary from state to number avoids duplicates;
+transitions are a dictionary $(i, X) \mapsto j$. \\
+SLR table, Section 4.6.4 (Algorithm 4.46) &
+\texttt{slr.py} &
+ACTION: dictionary $(i, a) \mapsto$ shift $j$ / reduce $p$ / accept.
+GOTO: dictionary $(i, A) \mapsto j$. \\
+LR parsing, Section 4.6.3 (Algorithm 4.44) &
+\texttt{slr.py} &
+Stack of states and a parallel stack of parse-tree nodes. \\
+SDDs, Sections 5.1.1--5.1.2 &
+\texttt{sdd.py}, \texttt{sdd\_def.py} &
+A rule stores the attribute it defines, the attributes it uses (as
+(position, name) pairs, position 0 being the head) and a function. \\
+Dependency graphs and evaluation order, Sections 5.2.1--5.2.2 &
+\texttt{sdd.py} &
+Vertices are pairs (node id, attribute); a dictionary maps each vertex to the set
+of vertices it depends on. Topological order with Kahn's algorithm and a heap. \\
+\bottomrule
+\end{tabular}
+\caption{Book sections, files and data structures.}
+\label{tab:map}
+\end{table}
+
+The programs are \texttt{main.py} (Items 1 and 2, with the input and output of
+Section 2.2 of the statement) and \texttt{sdd\_main.py} (Item 3). Both parsers
+offer the same interface (\texttt{name}, \texttt{is\_valid}, \texttt{parse}),
+so the program can choose one at run time and the SDD evaluator can use the
+parse tree built by either of them. Instructions to run them are in
+\texttt{README.md}.
+
+\section{Items 1 and 2: FIRST, FOLLOW, LL(1) and SLR(1)}
+
+\subsection{Algorithms}
+
+\paragraph{FIRST and FOLLOW (Section 4.4.2).}
+FIRST$(a) = \{a\}$ for every terminal. For the nonterminals we apply the rules
+of the book until no set changes: for each production $A \to X_1 \cdots X_n$
+we add FIRST$(X_1 \cdots X_n)$ to FIRST$(A)$. FIRST of a string adds
+FIRST$(X_i) - \{\varepsilon\}$ while $X_1, \ldots, X_{i-1}$ are all nullable,
+and contains $\varepsilon$ only if every $X_i$ is nullable (in particular, for
+the empty string). FOLLOW starts with $\$ \in$ FOLLOW$(S)$; for each
+$A \to \alpha B \beta$ we add FIRST$(\beta) - \{\varepsilon\}$ to FOLLOW$(B)$,
+and FOLLOW$(A)$ when $\varepsilon \in$ FIRST$(\beta)$, again until nothing
+changes.
+
+\paragraph{LL(1) test (Section 4.4.3).}
+We implement the definition at the beginning of the section and do not
+transform the grammar. For every pair of distinct productions
+$A \to \alpha \mid \beta$: (1) and (2) hold iff
+FIRST$(\alpha) \cap$ FIRST$(\beta) = \emptyset$ (with $\varepsilon$ counted
+as an element); (3) if $\varepsilon \in$ FIRST$(\beta)$ then
+FIRST$(\alpha) \cap$ FOLLOW$(A) = \emptyset$, and symmetrically.
+
+\paragraph{Predictive table and parser (Algorithms 4.31 and 4.34).}
+For each $A \to \alpha$ we add the production to $M[A, a]$ for every
+$a \in$ FIRST$(\alpha)$, and to $M[A, b]$ for every $b \in$ FOLLOW$(A)$
+(including \$) if $\varepsilon \in$ FIRST$(\alpha)$. The parser starts with
+$S\$$ on the stack and $w\$$ as input; it matches terminals, expands
+nonterminals with $M[X, a]$, and reports an error on an empty entry. Each
+expansion creates the children of the node on top of the stack, so the parse
+tree is built while parsing.
+
+\paragraph{SLR(1) (Sections 4.5, 4.6.2--4.6.4).}
+We augment the grammar with production 0, $S' \to S$. CLOSURE adds
+$B \to \cdot\gamma$ for each item with the dot before a nonterminal $B$;
+GOTO$(I, X)$ moves the dot over $X$ and takes the closure. The canonical
+collection starts with CLOSURE$(\{[S' \to \cdot S]\})$ and adds GOTO$(I, X)$
+for every state and symbol until no new state appears. ACTION gets
+shift $j$ for $[A \to \alpha \cdot a \beta]$, reduce $A \to \alpha$ for every
+$a \in$ FOLLOW$(A)$ for $[A \to \alpha \cdot]$, and accept for
+$[S' \to S \cdot]$ on \$. A second, different action in the same entry is a
+conflict, and the grammar is SLR(1) iff there is none. The parser of
+Algorithm 4.44 builds the tree bottom-up: a reduction by $A \to \beta$ pops
+$|\beta|$ nodes and makes them the children of a new node $A$.
+
+\subsection{Our grammar \G}
+
+\G\ describes records: a record is a list in parentheses of fields
+\texttt{a:V} separated by commas, and a value is \texttt{0}, \texttt{1} or
+another record. It has $\varepsilon$-productions and is recursive.
+
+\begin{verbatim}
+S -> (P)
+P -> KM e
+M -> ,KM e
+K -> a:V
+V -> 0 1 S
+\end{verbatim}
+
+\noindent The numbering used by the SLR table (\texttt{r}$p$ means reduce by
+production $p$) is:
+
+\begin{center}\small
+\begin{tabular}{rl}
+0 & \texttt{S'} $\to$ \texttt{S} \\
+1 & \texttt{S} $\to$ \texttt{(P)} \\
+2 & \texttt{P} $\to$ \texttt{KM} \\
+3 & \texttt{P} $\to$ $\varepsilon$ \\
+4 & \texttt{M} $\to$ \texttt{,{}KM} \\
+5 & \texttt{M} $\to$ $\varepsilon$ \\
+6 & \texttt{K} $\to$ \texttt{a:V} \\
+7 & \texttt{V} $\to$ \texttt{0} \\
+8 & \texttt{V} $\to$ \texttt{1} \\
+9 & \texttt{V} $\to$ \texttt{S}
+\end{tabular}
+\end{center}
+
+\noindent FIRST and FOLLOW, as computed by our program (\texttt{main.py -{}-sets}):
+
+\begin{center}\small
+\begin{tabular}{lll}
+\toprule
+Nonterminal & FIRST & FOLLOW \\
+\midrule
+\texttt{K} & \{\texttt{a}\} & \{\texttt{)}, \texttt{,{}}\} \\
+\texttt{M} & \{\texttt{,{}}, $\varepsilon$\} & \{\texttt{)}\} \\
+\texttt{P} & \{\texttt{a}, $\varepsilon$\} & \{\texttt{)}\} \\
+\texttt{S} & \{\texttt{(}\} & \{\texttt{)}, \texttt{,{}}, \texttt{\$}\} \\
+\texttt{V} & \{\texttt{(}, \texttt{0}, \texttt{1}\} & \{\texttt{)}, \texttt{,{}}\} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent \G\ is LL(1) and SLR(1). The LL(1) table computed by our program
+(\texttt{main.py -{}-tables}); empty entries are errors:
+
+\begin{center}\small
+\begin{tabular}{lcccccccc}
+\toprule
+ & \texttt{(} & \texttt{)} & \texttt{,{}} & \texttt{0} & \texttt{1} & \texttt{:} & \texttt{a} & \texttt{\$} \\
+\midrule
+\texttt{K} &  &  &  &  &  &  & \texttt{K} $\to$ \texttt{a:V} &  \\
+\texttt{M} &  & \texttt{M} $\to$ $\varepsilon$ & \texttt{M} $\to$ \texttt{,{}KM} &  &  &  &  &  \\
+\texttt{P} &  & \texttt{P} $\to$ $\varepsilon$ &  &  &  &  & \texttt{P} $\to$ \texttt{KM} &  \\
+\texttt{S} & \texttt{S} $\to$ \texttt{(P)} &  &  &  &  &  &  &  \\
+\texttt{V} & \texttt{V} $\to$ \texttt{S} &  &  & \texttt{V} $\to$ \texttt{0} & \texttt{V} $\to$ \texttt{1} &  &  &  \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The canonical collection of LR(0) items (kernel items first):
+
+\begin{multicols}{4}\small
+\noindent\textbf{I0}\\\texttt{S\textquotesingle} $\to$ \texttt{$\cdot$S}\\\texttt{S} $\to$ \texttt{$\cdot$(P)}
+
+\smallskip
+\noindent\textbf{I1}\\\texttt{S\textquotesingle} $\to$ \texttt{S$\cdot$}
+
+\smallskip
+\noindent\textbf{I2}\\\texttt{S} $\to$ \texttt{($\cdot$P)}\\\texttt{P} $\to$ \texttt{$\cdot$KM}\\\texttt{P} $\to$ \texttt{$\cdot$}\\\texttt{K} $\to$ \texttt{$\cdot$a:V}
+
+\smallskip
+\noindent\textbf{I3}\\\texttt{P} $\to$ \texttt{K$\cdot$M}\\\texttt{M} $\to$ \texttt{$\cdot$,{}KM}\\\texttt{M} $\to$ \texttt{$\cdot$}
+
+\smallskip
+\noindent\textbf{I4}\\\texttt{S} $\to$ \texttt{(P$\cdot$)}
+
+\smallskip
+\noindent\textbf{I5}\\\texttt{K} $\to$ \texttt{a$\cdot$:V}
+
+\smallskip
+\noindent\textbf{I6}\\\texttt{P} $\to$ \texttt{KM$\cdot$}
+
+\smallskip
+\noindent\textbf{I7}\\\texttt{M} $\to$ \texttt{,{}$\cdot$KM}\\\texttt{K} $\to$ \texttt{$\cdot$a:V}
+
+\smallskip
+\noindent\textbf{I8}\\\texttt{S} $\to$ \texttt{(P)$\cdot$}
+
+\smallskip
+\noindent\textbf{I9}\\\texttt{K} $\to$ \texttt{a:$\cdot$V}\\\texttt{S} $\to$ \texttt{$\cdot$(P)}\\\texttt{V} $\to$ \texttt{$\cdot$0}\\\texttt{V} $\to$ \texttt{$\cdot$1}\\\texttt{V} $\to$ \texttt{$\cdot$S}
+
+\smallskip
+\noindent\textbf{I10}\\\texttt{M} $\to$ \texttt{,{}K$\cdot$M}\\\texttt{M} $\to$ \texttt{$\cdot$,{}KM}\\\texttt{M} $\to$ \texttt{$\cdot$}
+
+\smallskip
+\noindent\textbf{I11}\\\texttt{V} $\to$ \texttt{S$\cdot$}
+
+\smallskip
+\noindent\textbf{I12}\\\texttt{K} $\to$ \texttt{a:V$\cdot$}
+
+\smallskip
+\noindent\textbf{I13}\\\texttt{V} $\to$ \texttt{0$\cdot$}
+
+\smallskip
+\noindent\textbf{I14}\\\texttt{V} $\to$ \texttt{1$\cdot$}
+
+\smallskip
+\noindent\textbf{I15}\\\texttt{M} $\to$ \texttt{,{}KM$\cdot$}
+\end{multicols}
+
+\noindent Transitions: {\small $I_{0}\xrightarrow{\texttt{(}}I_{2}$, $I_{0}\xrightarrow{\texttt{S}}I_{1}$, $I_{2}\xrightarrow{\texttt{K}}I_{3}$, $I_{2}\xrightarrow{\texttt{P}}I_{4}$, $I_{2}\xrightarrow{\texttt{a}}I_{5}$, $I_{3}\xrightarrow{\texttt{,{}}}I_{7}$, $I_{3}\xrightarrow{\texttt{M}}I_{6}$, $I_{4}\xrightarrow{\texttt{)}}I_{8}$, $I_{5}\xrightarrow{\texttt{:}}I_{9}$, $I_{7}\xrightarrow{\texttt{K}}I_{10}$, $I_{7}\xrightarrow{\texttt{a}}I_{5}$, $I_{9}\xrightarrow{\texttt{(}}I_{2}$, $I_{9}\xrightarrow{\texttt{0}}I_{13}$, $I_{9}\xrightarrow{\texttt{1}}I_{14}$, $I_{9}\xrightarrow{\texttt{S}}I_{11}$, $I_{9}\xrightarrow{\texttt{V}}I_{12}$, $I_{10}\xrightarrow{\texttt{,{}}}I_{7}$, $I_{10}\xrightarrow{\texttt{M}}I_{15}$.}
+
+\begin{center}\small
+\begin{tabular}{r|cccccccc|ccccc}
+\toprule
+state & \texttt{(} & \texttt{)} & \texttt{,{}} & \texttt{0} & \texttt{1} & \texttt{:} & \texttt{a} & \texttt{\$} & \texttt{K} & \texttt{M} & \texttt{P} & \texttt{S} & \texttt{V} \\
+\midrule
+0 & s2 &  &  &  &  &  &  &  &  &  &  & 1 &  \\
+1 &  &  &  &  &  &  &  & acc &  &  &  &  &  \\
+2 &  & r3 &  &  &  &  & s5 &  & 3 &  & 4 &  &  \\
+3 &  & r5 & s7 &  &  &  &  &  &  & 6 &  &  &  \\
+4 &  & s8 &  &  &  &  &  &  &  &  &  &  &  \\
+5 &  &  &  &  &  & s9 &  &  &  &  &  &  &  \\
+6 &  & r2 &  &  &  &  &  &  &  &  &  &  &  \\
+7 &  &  &  &  &  &  & s5 &  & 10 &  &  &  &  \\
+8 &  & r1 & r1 &  &  &  &  & r1 &  &  &  &  &  \\
+9 & s2 &  &  & s13 & s14 &  &  &  &  &  &  & 11 & 12 \\
+10 &  & r5 & s7 &  &  &  &  &  &  & 15 &  &  &  \\
+11 &  & r9 & r9 &  &  &  &  &  &  &  &  &  &  \\
+12 &  & r6 & r6 &  &  &  &  &  &  &  &  &  &  \\
+13 &  & r7 & r7 &  &  &  &  &  &  &  &  &  &  \\
+14 &  & r8 & r8 &  &  &  &  &  &  &  &  &  &  \\
+15 &  & r4 &  &  &  &  &  &  &  &  &  &  &  \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{A string parsed step by step}
+
+Trace of \texttt{(a:1,{}a:())} with the LL(1) parser (\texttt{main.py -{}-trace});
+the top of the stack is on the left, as in Fig.~4.21 of the book:
+
+{\small
+\begin{longtable}{rlll}
+\toprule
+& Stack & Input & Action \\
+\midrule
+1 & \texttt{S\$} & \texttt{(a:1,{}a:())\$} & \texttt{output S $\to$ (P)} \\
+2 & \texttt{(P)\$} & \texttt{(a:1,{}a:())\$} & \texttt{match (} \\
+3 & \texttt{P)\$} & \texttt{a:1,{}a:())\$} & \texttt{output P $\to$ KM} \\
+4 & \texttt{KM)\$} & \texttt{a:1,{}a:())\$} & \texttt{output K $\to$ a:V} \\
+5 & \texttt{a:VM)\$} & \texttt{a:1,{}a:())\$} & \texttt{match a} \\
+6 & \texttt{:VM)\$} & \texttt{:1,{}a:())\$} & \texttt{match :} \\
+7 & \texttt{VM)\$} & \texttt{1,{}a:())\$} & \texttt{output V $\to$ 1} \\
+8 & \texttt{1M)\$} & \texttt{1,{}a:())\$} & \texttt{match 1} \\
+9 & \texttt{M)\$} & \texttt{,{}a:())\$} & \texttt{output M $\to$ ,{}KM} \\
+10 & \texttt{,{}KM)\$} & \texttt{,{}a:())\$} & \texttt{match ,{}} \\
+11 & \texttt{KM)\$} & \texttt{a:())\$} & \texttt{output K $\to$ a:V} \\
+12 & \texttt{a:VM)\$} & \texttt{a:())\$} & \texttt{match a} \\
+13 & \texttt{:VM)\$} & \texttt{:())\$} & \texttt{match :} \\
+14 & \texttt{VM)\$} & \texttt{())\$} & \texttt{output V $\to$ S} \\
+15 & \texttt{SM)\$} & \texttt{())\$} & \texttt{output S $\to$ (P)} \\
+16 & \texttt{(P)M)\$} & \texttt{())\$} & \texttt{match (} \\
+17 & \texttt{P)M)\$} & \texttt{))\$} & \texttt{output P $\to$ e} \\
+18 & \texttt{)M)\$} & \texttt{))\$} & \texttt{match )} \\
+19 & \texttt{M)\$} & \texttt{)\$} & \texttt{output M $\to$ e} \\
+20 & \texttt{)\$} & \texttt{)\$} & \texttt{match )} \\
+21 & \texttt{\$} & \texttt{\$} & \texttt{accept} \\
+\bottomrule
+\end{longtable}}
+
+\noindent The same string with the SLR(1) parser (states and symbols on the
+stack, top on the right):
+
+{\small
+\begin{longtable}{rlll}
+\toprule
+& Stack & Input & Action \\
+\midrule
+1 & \texttt{0} & \texttt{(a:1,{}a:())\$} & \texttt{shift 2} \\
+2 & \texttt{0 ( 2} & \texttt{a:1,{}a:())\$} & \texttt{shift 5} \\
+3 & \texttt{0 ( 2 a 5} & \texttt{:1,{}a:())\$} & \texttt{shift 9} \\
+4 & \texttt{0 ( 2 a 5 : 9} & \texttt{1,{}a:())\$} & \texttt{shift 14} \\
+5 & \texttt{0 ( 2 a 5 : 9 1 14} & \texttt{,{}a:())\$} & \texttt{reduce V $\to$ 1} \\
+6 & \texttt{0 ( 2 a 5 : 9 V 12} & \texttt{,{}a:())\$} & \texttt{reduce K $\to$ a:V} \\
+7 & \texttt{0 ( 2 K 3} & \texttt{,{}a:())\$} & \texttt{shift 7} \\
+8 & \texttt{0 ( 2 K 3 ,{} 7} & \texttt{a:())\$} & \texttt{shift 5} \\
+9 & \texttt{0 ( 2 K 3 ,{} 7 a 5} & \texttt{:())\$} & \texttt{shift 9} \\
+10 & \texttt{0 ( 2 K 3 ,{} 7 a 5 : 9} & \texttt{())\$} & \texttt{shift 2} \\
+11 & \texttt{0 ( 2 K 3 ,{} 7 a 5 : 9 ( 2} & \texttt{))\$} & \texttt{reduce P $\to$ e} \\
+12 & \texttt{0 ( 2 K 3 ,{} 7 a 5 : 9 ( 2 P 4} & \texttt{))\$} & \texttt{shift 8} \\
+13 & \texttt{0 ( 2 K 3 ,{} 7 a 5 : 9 ( 2 P 4 ) 8} & \texttt{)\$} & \texttt{reduce S $\to$ (P)} \\
+14 & \texttt{0 ( 2 K 3 ,{} 7 a 5 : 9 S 11} & \texttt{)\$} & \texttt{reduce V $\to$ S} \\
+15 & \texttt{0 ( 2 K 3 ,{} 7 a 5 : 9 V 12} & \texttt{)\$} & \texttt{reduce K $\to$ a:V} \\
+16 & \texttt{0 ( 2 K 3 ,{} 7 K 10} & \texttt{)\$} & \texttt{reduce M $\to$ e} \\
+17 & \texttt{0 ( 2 K 3 ,{} 7 K 10 M 15} & \texttt{)\$} & \texttt{reduce M $\to$ ,{}KM} \\
+18 & \texttt{0 ( 2 K 3 M 6} & \texttt{)\$} & \texttt{reduce P $\to$ KM} \\
+19 & \texttt{0 ( 2 P 4} & \texttt{)\$} & \texttt{shift 8} \\
+20 & \texttt{0 ( 2 P 4 ) 8} & \texttt{\$} & \texttt{reduce S $\to$ (P)} \\
+21 & \texttt{0 S 1} & \texttt{\$} & \texttt{accept} \\
+\bottomrule
+\end{longtable}}
+
+\subsection{Results}
+
+\begin{center}\small
+\begin{tabular}{lcc}
+\toprule
+String & LL(1) & SLR(1) \\
+\midrule
+\texttt{()} & yes & yes \\
+\texttt{(a:1,{}a:(a:0))} & yes & yes \\
+\texttt{(a:0,{}a:1,{}a:(a:(a:1)))} & yes & yes \\
+\texttt{(a:1,{})} & no & no \\
+\texttt{(a:(),{}a:1} & no & no \\
+\texttt{e} & no & no \\
+\texttt{(b:1)} & no & no \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent \texttt{e} is the empty string, which is not in $L(\G)$;
+\texttt{b} is not a terminal of \G. The exact run of \texttt{main.py}:
+
+{\small
+\noindent Input:
+\begin{multicols}{3}
+\begin{verbatim}
+5
+S -> (P)
+P -> KM e
+M -> ,KM e
+K -> a:V
+V -> 0 1 S
+T
+()
+(a:1,a:(a:0))
+(a:0,a:1,a:(a:(a:1)))
+(a:1,)
+(a:(),a:1
+e
+(b:1)
+
+B
+()
+(a:1,a:(a:0))
+(a:0,a:1,a:(a:(a:1)))
+(a:1,)
+(a:(),a:1
+e
+(b:1)
+
+Q
+\end{verbatim}
+\end{multicols}
+\noindent Output:
+\begin{verbatim}
+Select a parser (T: for LL(1), B: for SLR(1), Q: quit):
+yes
+yes
+yes
+no
+no
+no
+no
+Select a parser (T: for LL(1), B: for SLR(1), Q: quit):
+yes
+yes
+yes
+no
+no
+no
+no
+Select a parser (T: for LL(1), B: for SLR(1), Q: quit):
+\end{verbatim}}
+
+\section{Item 3: syntax-directed definition}
+
+\subsection{Grammar}
+
+The language is the nonempty lists of digits separated by commas, where an
+element can also be a nested list in brackets, for example
+\texttt{1,[2,3],4}.
+
+\begin{center}
+\begin{tabular}{l}
+\texttt{S -> L} \\
+\texttt{L -> EM} \\
+\texttt{M -> ,EM e} \\
+\texttt{E -> D [L]} \\
+\texttt{D -> 0 1 2 3 4 5 6 7 8 9}
+\end{tabular}
+\end{center}
+
+It satisfies the conditions of Step 1. G1: it follows the conventions of
+Section 2.2 and it is LL(1) and SLR(1); we parse with our own parsers (LL(1)
+by default, SLR(1) with \texttt{-{}-slr}, and both give the same results).
+G2: it has 5 nonterminals and 16 productions, and $L$ and $M$ are recursive
+($L \Rightarrow EM \Rightarrow [L]M$ and $M \to ,EM$). G3: neither the grammar
+nor the SDD is in the book or the statement. A first version of our SDD also
+computed the maximum nesting depth; we removed that attribute because it was
+the same idea as the example of the statement.
+
+\subsection{Attributes}
+
+The SDD computes the \emph{depth-weighted sum} of the list: every digit is
+multiplied by the depth of the list where it appears (the top level is depth
+1). For \texttt{1,[2,3],4} it is $1\cdot1 + (2+3)\cdot2 + 4\cdot1 = 15$.
+
+\begin{center}\small
+\begin{tabular}{lllll}
+\toprule
+Symbol & Attribute & Kind & Type & Meaning \\
+\midrule
+$S$ & $s$ & synthesized & integer & depth-weighted sum of the whole list (main attribute) \\
+$L$, $M$, $E$ & $d$ & inherited & integer & depth of the list the symbol belongs to \\
+$L$, $M$, $E$ & $s$ & synthesized & integer & depth-weighted sum of the digits in the subtree \\
+$D$ & $val$ & synthesized & integer & numeric value of the digit \\
+terminals & $lexval$ & synthesized & character & the character itself (given by the scanner) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Semantic rules}
+
+In the format of Fig.~5.1 of the book (subscripts distinguish two occurrences
+of the same nonterminal):
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Production & Semantic rules \\
+\midrule
+$S \to L$ & $L.d = 1$; \quad $S.s = L.s$ \\
+$L \to E\,M$ & $E.d = L.d$; \quad $M.d = L.d$; \quad $L.s = E.s + M.s$ \\
+$M \to ,\,E\,M_1$ & $E.d = M.d$; \quad $M_1.d = M.d$; \quad $M.s = E.s + M_1.s$ \\
+$M \to \varepsilon$ & $M.s = 0$ \\
+$E \to D$ & $E.s = D.val \times E.d$ \\
+$E \to [\,L\,]$ & $L.d = E.d + 1$; \quad $E.s = L.s$ \\
+$D \to \mathit{digit}$ & $D.val = \mathit{digit}.lexval$ as an integer \quad ($\mathit{digit} \in \{0, \ldots, 9\}$) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+We checked the conditions of Section 5.1.1 for every production, and the
+program checks them too before evaluating (\texttt{SDD.check}): each rule
+defines a synthesized attribute of the head or an inherited attribute of a
+symbol of the body, using only attributes of the same production; $s$ of the
+head and $d$ of every nonterminal of the body are defined exactly once; and
+$S$ has no inherited attributes.
+
+\subsection{Example by hand (Step 3)}
+
+We use the string \texttt{1,[2,3]} (7 terminals).
+
+\todo{Draw the parse tree of \texttt{1,[2,3]} and annotate every node with the
+values of its attributes.}
+
+\todo{Draw the dependency graph of that tree: one vertex for each attribute of
+each node, and one edge from each attribute that a rule uses to the attribute
+that the rule defines (Section 5.2.1).}
+
+\todo{Give one valid evaluation order (a topological order of the graph,
+Section 5.2.2).}
+
+\noindent We verified the example with our program. Nodes are numbered in
+preorder, and \texttt{X\#n.a} is attribute \texttt{a} of node \texttt{n}:
+
+{\small
+\begin{multicols}{2}
+\begin{verbatim}
+Annotated parse tree:
+S#1 [S -> L] {s=11}
+  L#2 [L -> EM] {d=1, s=11}
+    E#3 [E -> D] {d=1, s=1}
+      D#4 [D -> 1] {val=1}
+        '1'#5 {lexval=1}
+    M#6 [M -> ,EM] {d=1, s=10}
+      ','#7 {lexval=,}
+      E#8 [E -> [L]] {d=1, s=10}
+        '['#9 {lexval=[}
+        L#10 [L -> EM] {d=2, s=10}
+          E#11 [E -> D] {d=2, s=4}
+            D#12 [D -> 2] {val=2}
+              '2'#13 {lexval=2}
+          M#14 [M -> ,EM] {d=2, s=6}
+            ','#15 {lexval=,}
+            E#16 [E -> D] {d=2, s=6}
+              D#17 [D -> 3] {val=3}
+                '3'#18 {lexval=3}
+            M#19 [M -> e] {d=2, s=0}
+        ']'#20 {lexval=]}
+      M#21 [M -> e] {d=1, s=0}
+Evaluation order:
+    1. L#2.d
+    2. E#3.d
+    3. '1'#5.lexval   (given by the scanner)
+    4. D#4.val
+    5. E#3.s
+    6. M#6.d
+    7. ','#7.lexval   (given by the scanner)
+    8. E#8.d
+    9. '['#9.lexval   (given by the scanner)
+   10. L#10.d
+   11. E#11.d
+   12. '2'#13.lexval   (given by the scanner)
+   13. D#12.val
+   14. E#11.s
+   15. M#14.d
+   16. ','#15.lexval   (given by the scanner)
+   17. E#16.d
+   18. '3'#18.lexval   (given by the scanner)
+   19. D#17.val
+   20. E#16.s
+   21. M#19.d
+   22. M#19.s
+   23. M#14.s
+   24. L#10.s
+   25. E#8.s
+   26. ']'#20.lexval   (given by the scanner)
+   27. M#21.d
+   28. M#21.s
+   29. M#6.s
+   30. L#2.s
+   31. S#1.s
+S.s = 11
+\end{verbatim}
+\end{multicols}}
+
+\subsection{Classification (Step 4)}
+
+The SDD is \textbf{not S-attributed}, because $d$ is an inherited attribute
+(Section 5.2.3 requires every attribute to be synthesized).
+
+It is \textbf{L-attributed} (Section 5.2.4). Synthesized attributes are always
+allowed. Every inherited attribute of a body symbol $X_i$ depends only on
+inherited attributes of the head and on attributes of symbols to the left of
+$X_i$: $L.d = 1$ uses nothing; $E.d = L.d$, $M.d = L.d$, $E.d = M.d$,
+$M_1.d = M.d$ and $L.d = E.d + 1$ use only the inherited attribute $d$ of the
+head. No inherited attribute depends on an attribute of a symbol to its right,
+and no attribute of a node depends on itself.
+
+As the statement requires, our evaluator does not use this property: it
+always builds the dependency graph and follows a topological order, so it
+works for any non-circular SDD.
+
+\subsection{Implementation (Step 5)}
+
+\begin{enumerate}
+\item \emph{SDD as data.} \texttt{sdd\_def.py} contains the grammar lines, the
+attributes of each symbol and, for each production, its list of rules. A rule
+is (attribute defined, attributes used, function), with attributes written as
+(position, name). \texttt{sdd.py} does not know anything about our SDD.
+\item \emph{Parse tree.} The parsers of Item 2 build it. Each node stores its
+symbol, the index of the production used (nonterminals only), its children
+and its attribute values; leaves get \textit{lexval}.
+\item \emph{Dependency graph.} For each internal node we instantiate the rules
+of its production, replacing each position by the corresponding node, and
+add one edge from each attribute used to the attribute defined.
+\item \emph{Order and evaluation.} Kahn's algorithm gives a topological order
+(ties are broken by node number to make the output deterministic). If some
+vertices are left, the graph has a cycle: we report it and stop. Otherwise we
+apply the rules in that order.
+\item \emph{Output.} For each string, \texttt{no} if it is not in the
+language; otherwise the annotated tree (one node per line, indented by depth),
+the evaluation order and the value of $S.s$.
+\end{enumerate}
+
+\subsection{Tests (Step 6)}
+
+Results with \texttt{sdd\_main.py}; the LL(1) and the SLR(1) parsers give
+the same values:
+
+\begin{center}\small
+\begin{tabular}{lll}
+\toprule
+String & Output & Note \\
+\midrule
+\texttt{7} & \texttt{S.s = 7} & shortest string (one digit) \\
+\texttt{1,{}[2,{}3],{}4} & \texttt{S.s = 15} &  \\
+\texttt{[1,{}[2]],{}3} & \texttt{S.s = 11} &  \\
+\texttt{[[[[5]]]]} & \texttt{S.s = 25} &  \\
+\texttt{[}$^{30}$\texttt{1}\texttt{]}$^{30}$ & \texttt{S.s = 31} & deep nesting: 30 levels \\
+\texttt{1,{},{}2} & \texttt{no} & not in the language \\
+\texttt{[1} & \texttt{no} & not in the language \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent To test circularity, \texttt{sdd\_main.py -{}-circular} replaces the
+rule $L.d = 1$ of $S \to L$ by $L.d = L.s$. Since $L.s$ depends on $E.s$,
+which depends on $E.d$, which depends on $L.d$, the graph has a cycle and the
+program stops:
+
+{\small
+\begin{verbatim}
+The SDD is circular. Cycle in the dependency graph:
+  L#2.d -> E#3.d -> E#3.s -> L#2.s -> L#2.d
+\end{verbatim}}
+
+\section{Testing}
+
+Besides the examples above, \texttt{tests/test\_project.py} checks
+automatically: the three examples of the statement (exact output, including
+\texttt{-{}-sets}); edge cases (terminals such as \texttt{-}, \texttt{\textgreater} and
+\texttt{|}, the empty string, the line of $S$ not being the first one,
+symbols that are not terminals, end of input without an empty line); a string
+of 100\,000 symbols; and the SDD with both parsers, a nesting depth of 2000
+and the circular variant. It also generates hundreds of random grammars and
+compares the answers of both parsers, for all strings of length up to 4, with
+an independent Earley recognizer.
+
+\section{Problems found and how we solved them}
+
+\begin{enumerate}
+\item \textbf{LL(1) test vs.\ table conflicts.} We first decided LL(1)-ness by
+looking for multiply-defined entries in the table. The statement asks for the
+definition of Section 4.4.3, so we implemented it. Comparing both on random
+grammars showed they differ in one case: an unreachable nonterminal with two
+nullable alternatives (e.g.\ \texttt{S -> a e}, \texttt{B -> S e}). FOLLOW$(B)$
+is empty, so the table has no conflict, but condition (2) fails. We follow the
+definition, so our program says that grammar is SLR(1) only.
+\item \textbf{Reductions by $\varepsilon$.} A reduction by $A \to \varepsilon$
+pops zero symbols. In Python, \texttt{nodes[-0:]} is the whole list, not an
+empty one, so we slice with \texttt{nodes[len(nodes) - k:]}.
+\item \textbf{Augmented start symbol.} The new start symbol must not be a
+symbol of the grammar. Since all symbols are single characters, we use the
+two-character name \texttt{S'}.
+\item \textbf{Input strings.} The end marker is appended by the program, and
+a string with a symbol that is not a terminal of the grammar (for example
+\texttt{\$}) is rejected before parsing; otherwise \texttt{a\$} could be
+accepted by mistake.
+\item \textbf{Slow parsing of long strings.} Our first LL(1) parser built the
+text of the trace in every step even when it was not printed, which made it
+quadratic: a string of 32\,000 symbols took more than 3 minutes. Now the trace
+is built only with \texttt{-{}-trace}, and the same string takes less than one
+second.
+\item \textbf{Deep trees.} Recursive traversals of the parse tree failed with
+deep nesting (Python's recursion limit). We made them iterative.
+\item \textbf{Interactive use.} The first version read all the input before
+answering, so the menu of case 1 did not respond when typing. Now the program
+reads one line at a time.
+\item \textbf{Module names.} Files named \texttt{sdd-main.py} or \texttt{LL1.py}
+could not be imported as \texttt{sdd\_main} or \texttt{ll1}; we renamed them.
+\end{enumerate}
+
+\end{document}
