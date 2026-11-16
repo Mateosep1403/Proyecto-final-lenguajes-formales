@@ -3,7 +3,7 @@
 ## Group members
 
 - Mateo Sepúlveda Escobar
-- TODO: full name of Isabella
+- Isabella Hernández Posada
 
 ## Environment
 
