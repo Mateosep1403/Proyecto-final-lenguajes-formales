@@ -8,4 +8,4 @@ class Node:
         self.prod = None          # index into Grammar.productions (nonterminals only)
         self.children = []
         self.attrs = {}           # attribute name -> value
-        self.id = None            # assigned by sdd.number_nodes
+        self.id = None            # assigned by sdd.build_graph
