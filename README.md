@@ -95,8 +95,6 @@ our program reports that grammar as SLR(1) only.
 
 ## Generative AI usage
 
-TODO: describe what Mateo used AI for when writing the first version.
-
 We used Claude (Anthropic), through Claude Code, to review the code against
 the statement, find bugs (unimportable file names, quadratic LL(1) parsing,
 recursion limit on deep trees, LL(1) test not following the definition, input
@@ -104,8 +102,7 @@ read all at once) and refactor it, and to write the automated tests. We also
 used it to draft the text of the report and to generate its tables and traces
 from the output of our programs.
 
-TODO (only if true before submitting): the hand-worked example of Item 3
+TODO: the hand-worked example of Item 3
 (Step 3) was done by us, by hand.
 
-TODO (only if true before submitting): every member of the group read the
-changes, traced the algorithms by hand, and can explain and modify the code.
+
