@@ -9,7 +9,7 @@ import sys
 
 import sdd_def
 from grammar import Grammar
-from input_strings import read_strings
+from input_strings import ignore_byte_order_mark, read_strings
 from ll1 import LL1
 from slr import SLR
 from sdd import evaluate, print_tree, print_order, print_sdd, vertex_str
@@ -17,6 +17,7 @@ from sdd import evaluate, print_tree, print_order, print_sdd, vertex_str
 
 def main():
     flags = set(sys.argv[1:])
+    ignore_byte_order_mark()
     g = Grammar(sdd_def.GRAMMAR_LINES)
     parser = SLR(g) if '--slr' in flags else LL1(g)
     if not parser.is_valid:

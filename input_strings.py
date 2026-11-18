@@ -1,6 +1,14 @@
-"""Reading of the strings to parse, shared by main.py and sdd_main.py."""
+"""Reading of the input, shared by main.py and sdd_main.py."""
+
+import sys
 
 from grammar import EPS
+
+
+def ignore_byte_order_mark():
+    """Windows PowerShell (and Notepad) may put a UTF-8 byte order mark at the
+    beginning of the text; the 'utf-8-sig' codec drops it."""
+    sys.stdin.reconfigure(encoding='utf-8-sig')
 
 
 def read_strings(stream):

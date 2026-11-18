@@ -11,8 +11,6 @@
 - Programming language: Python 3.14.3 (any Python 3.8 or newer works)
 - Tools: none (only the Python standard library; no parser generators or parsing libraries)
 
-On Windows use `python` instead of `python3` in the commands below.
-
 ## Files
 
 | File | Content | Book |
@@ -21,23 +19,37 @@ On Windows use `python` instead of `python3` in the commands below.
 | `ll1.py` | LL(1) test (definition), predictive parsing table, table-driven predictive parser | Section 4.4.3, Alg. 4.31; Section 4.4.4, Alg. 4.34 |
 | `slr.py` | LR(0) items, CLOSURE/GOTO, canonical collection, SLR(1) ACTION/GOTO tables, LR parser | Section 4.6.2; Alg. 4.46; Section 4.6.3, Alg. 4.44 |
 | `tree.py` | Parse tree node | |
-| `input_strings.py` | Reading of the strings to parse (shared by both programs) | |
+| `input_strings.py` | Reading of the input (shared by both programs) | |
 | `main.py` | Items 1 and 2 (input/output of Section 2.2 of the statement) | |
 | `sdd.py` | Generic SDD evaluator: dependency graph, topological order, cycle detection | Sections 5.1, 5.2.1, 5.2.2 |
 | `sdd_def.py` | Our grammar and our SDD, written as data (Item 3) | |
 | `sdd_main.py` | Item 3 program | |
+| `examples/` | Input files for the examples below | |
 | `tests/test_project.py` | Automated tests | |
 | `report.pdf` | Report (Item 4) | |
-| `report/report.tex` | LaTeX source of the report | |
+| `report/` | LaTeX source of the report and its figures | |
 
 ## How to run
 
-No build step is needed.
+No build step is needed. Run every command from the root folder of the project.
+
+The programs read their input from the standard input. The way to send a file
+to the standard input depends on the terminal:
+
+| Terminal | Command |
+| --- | --- |
+| Windows PowerShell | `Get-Content examples\example1.txt \| python main.py` |
+| Windows Command Prompt (cmd) | `python main.py < examples\example1.txt` |
+| Linux / macOS / Git Bash | `python3 main.py < examples/example1.txt` |
+
+On Windows use `python` (`python3` may open the Microsoft Store instead).
+The programs can also be used interactively: run `python main.py` and type the
+input; an empty line ends the strings to parse.
 
 ### Items 1 and 2
 
 ```
-python3 main.py [--sets] [--tables] [--trace] < input.txt
+python main.py [--sets] [--tables] [--trace]
 ```
 
 - `--sets`: print FIRST and FOLLOW after reading the grammar.
@@ -45,18 +57,27 @@ python3 main.py [--sets] [--tables] [--trace] < input.txt
 - `--trace`: print the step-by-step trace of each parse.
 
 Without `--tables` and `--trace` the output is exactly the one of Section 2.2.2 of the statement.
-The program can also be used interactively (type the grammar and the strings).
 
-Example:
+Examples (PowerShell):
 
 ```
-printf '3\nS -> S+T T\nT -> T*F F\nF -> (S) i\ni+i\n(i)\n(i+i)*i)\n\n' | python3 main.py
+Get-Content examples\example1.txt | python main.py
+Get-Content examples\example2.txt | python main.py --sets
+Get-Content examples\example3.txt | python main.py
+Get-Content examples\report_grammar.txt | python main.py --sets --tables --trace
 ```
+
+| File | Content | Expected output |
+| --- | --- | --- |
+| `example1.txt` | Example 1 of the statement | `Grammar is SLR(1).` then `yes`, `yes`, `no` |
+| `example2.txt` | Example 2 of the statement (chooses `T`, then `Q`) | the menu, `yes`, `yes`, `no`, the menu |
+| `example3.txt` | Example 3 of the statement | `Grammar is neither LL(1) nor SLR(1).` |
+| `report_grammar.txt` | The grammar of the report, with both parsers | the menu, `yes yes no no no` twice |
 
 ### Item 3
 
 ```
-python3 sdd_main.py [--slr] [--show] [--circular] < strings.txt
+python sdd_main.py [--slr] [--show] [--circular]
 ```
 
 Strings are read one per line until an empty line (`e` is the empty string).
@@ -66,18 +87,21 @@ The grammar and the SDD are in `sdd_def.py`.
 - `--show`: print the attribute table and the semantic rules.
 - `--circular`: use a deliberately circular variant of the SDD, to show cycle detection.
 
-Example:
+Examples (PowerShell):
 
 ```
-printf '1,[2,3],4\n\n' | python3 sdd_main.py
+Get-Content examples\sdd_strings.txt | python sdd_main.py
+Get-Content examples\sdd_strings.txt | python sdd_main.py --slr --show
+Get-Content examples\sdd_strings.txt | python sdd_main.py --circular
 ```
+
+For the strings of `sdd_strings.txt` the values are `S.s = 7`, `11`, `15`, `25`
+and `no` for `1,,2`.
 
 ### Tests
 
-From the project root:
-
 ```
-python3 -m unittest tests.test_project -v
+python -m unittest tests.test_project -v
 ```
 
 They check the examples of the statement, edge cases, Item 3, and compare both
@@ -95,14 +119,7 @@ our program reports that grammar as SLR(1) only.
 
 ## Generative AI usage
 
-We used Claude (Anthropic), through Claude Code, to review the code against
-the statement, find bugs (unimportable file names, quadratic LL(1) parsing,
-recursion limit on deep trees, LL(1) test not following the definition, input
-read all at once) and refactor it, and to write the automated tests. We also
-used it to draft the text of the report and to generate its tables and traces
-from the output of our programs.
-
-TODO: the hand-worked example of Item 3
-(Step 3) was done by us, by hand.
-
-
+We used generative AI tools, mainly Claude (Anthropic), as support during the
+whole project: to clarify concepts of the book, to write, review and debug the
+code, to write the tests and to prepare the report. We reviewed, ran and tested
+everything we submit.

@@ -7,7 +7,7 @@
 import sys
 
 from grammar import Grammar
-from input_strings import read_strings
+from input_strings import ignore_byte_order_mark, read_strings
 from ll1 import LL1
 from slr import SLR
 
@@ -32,6 +32,7 @@ def print_tables(ll1, slr):
 
 def main():
     flags = set(sys.argv[1:])
+    ignore_byte_order_mark()
     n = int(sys.stdin.readline())
     g = Grammar([sys.stdin.readline() for _ in range(n)])
     if '--sets' in flags:

@@ -96,6 +96,16 @@ class EdgeCases(unittest.TestCase):
         out = run('main.py', "2\nA -> b\nS -> aA\nT\nab\naxb\nAb\na$\n\nQ\n")
         self.assertEqual(out.split('\n')[1:5], ['yes', 'no', 'no', 'no'])
 
+    def test_byte_order_mark_is_ignored(self):
+        # Windows PowerShell may send a UTF-8 BOM before the piped text.
+        bom = b'\xef\xbb\xbf'
+        out = subprocess.run([sys.executable, 'main.py'], input=bom + b"1\nS -> S+a a\na+a\n\n",
+                             capture_output=True, check=True).stdout
+        self.assertEqual(out.split(), [b'Grammar', b'is', b'SLR(1).', b'yes'])
+        out = subprocess.run([sys.executable, 'sdd_main.py'], input=bom + b"7\n\n",
+                             capture_output=True, check=True).stdout
+        self.assertTrue(out.rstrip().endswith(b"S.s = 7"))
+
     def test_end_of_input_without_empty_line(self):
         out = run('main.py', "1\nS -> a\nT\na")
         self.assertIn("yes", out)

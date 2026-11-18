@@ -6,10 +6,8 @@
 \usepackage{booktabs}
 \usepackage{longtable}
 \usepackage{multicol}
-\usepackage{xcolor}
+\usepackage{graphicx}
 \usepackage{hyperref}
-
-\newcommand{\todo}[1]{\par\noindent\fcolorbox{red}{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{\textbf{TODO (by hand):} #1}}\par\smallskip}
 \newcommand{\G}{\ensuremath{G_1}}
 
 \title{Formal Languages Project\\FIRST/FOLLOW, LL(1), SLR(1) and SDD evaluation}
@@ -478,22 +476,34 @@ symbol of the body, using only attributes of the same production; $s$ of the
 head and $d$ of every nonterminal of the body are defined exactly once; and
 $S$ has no inherited attributes.
 
-\subsection{Example by hand (Step 3)}
+\subsection{Worked example (Step 3)}
 
-We use the string \texttt{1,[2,3]} (7 terminals).
+We use the string \texttt{1,[2,3]} (7 terminals). Nodes are numbered in
+preorder. Figure~\ref{fig:tree} shows its annotated parse tree, and
+Figure~\ref{fig:graph} its dependency graph (Section 5.2.1): one vertex for
+each attribute of each node, grouped by node, and one edge from each attribute
+that a rule uses to the attribute that the rule defines. Inherited attributes
+($d$) are blue, synthesized attributes ($s$, $val$) are orange and green, and
+the $lexval$ of the leaves is gray.
 
-\todo{Draw the parse tree of \texttt{1,[2,3]} and annotate every node with the
-values of its attributes.}
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.62\linewidth]{step3_parse_tree.png}
+\caption{Annotated parse tree of \texttt{1,[2,3]}.}
+\label{fig:tree}
+\end{figure}
 
-\todo{Draw the dependency graph of that tree: one vertex for each attribute of
-each node, and one edge from each attribute that a rule uses to the attribute
-that the rule defines (Section 5.2.1).}
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{step3_dependency_graph.png}
+\caption{Dependency graph of the parse tree of Figure~\ref{fig:tree}.}
+\label{fig:graph}
+\end{figure}
 
-\todo{Give one valid evaluation order (a topological order of the graph,
-Section 5.2.2).}
-
-\noindent We verified the example with our program. Nodes are numbered in
-preorder, and \texttt{X\#n.a} is attribute \texttt{a} of node \texttt{n}:
+\noindent A valid evaluation order is a topological order of this graph
+(Section 5.2.2). The one below is the order computed by our program, where
+\texttt{X\#n.a} is attribute \texttt{a} of node \texttt{n}; every attribute
+appears after all the attributes it depends on:
 
 {\small
 \begin{multicols}{2}
@@ -633,7 +643,8 @@ Besides the examples above, \texttt{tests/test\_project.py} checks
 automatically: the three examples of the statement (exact output, including
 \texttt{-{}-sets}); edge cases (terminals such as \texttt{-}, \texttt{\textgreater} and
 \texttt{|}, the empty string, the line of $S$ not being the first one,
-symbols that are not terminals, end of input without an empty line); a string
+symbols that are not terminals, end of input without an empty line, input that
+starts with a UTF-8 byte order mark); a string
 of 100\,000 symbols; and the SDD with both parsers, a nesting depth of 2000
 and the circular variant. It also generates hundreds of random grammars and
 compares the answers of both parsers, for all strings of length up to 4, with
@@ -671,6 +682,12 @@ answering, so the menu of case 1 did not respond when typing. Now the program
 reads one line at a time.
 \item \textbf{Module names.} Files named \texttt{sdd-main.py} or \texttt{LL1.py}
 could not be imported as \texttt{sdd\_main} or \texttt{ll1}; we renamed them.
+\item \textbf{Running on Windows.} When a file is piped to the program in
+Windows PowerShell, the text may start with an invisible UTF-8 byte order
+mark, so the first line (\texttt{3}) was read as \texttt{\textbackslash ufeff3}
+and the program failed. Both programs now read the standard input with the
+\texttt{utf-8-sig} codec, which drops that mark. The README gives the command
+to run the examples in PowerShell, cmd and Linux/macOS.
 \end{enumerate}
 
 \end{document}
